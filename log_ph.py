@@ -8,7 +8,7 @@ from CoolProp.CoolProp import AbstractState
 # -----------------------------
 # Parameter
 # -----------------------------
-fluid = 'Argon'
+fluid = 'Krypton'
 xmax_kJ = 100.0
 n_iso_T = 12
 n_iso_s = 10
@@ -16,7 +16,7 @@ n_iso_s = 10
 AS = AbstractState('HEOS', fluid)
 
 # Referenzzustand
-T_ref, p_ref = 298.15, 1e5
+T_ref, p_ref = 200, 1e5
 h_ref = CP.PropsSI('H', 'T', T_ref, 'P', p_ref, fluid)
 
 # Grenzen
