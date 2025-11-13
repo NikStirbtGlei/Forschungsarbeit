@@ -14,7 +14,8 @@ T1 = 268.15
 p1 = 300000
 fluid='Krypton'
 r2= 0.5
-r1=0.1
+r1=0.2
+r0=0.08
 n=5000/60 # Umdrehungen pro s [1/s]
 omega=n*2*np.pi
 eta_Verdichtung = 0.99
@@ -60,16 +61,16 @@ def dp_real_12(r,p):
 sol_real_12 = solve_ivp(dp_real_12,(r1, r2),[p1], method="DOP853",t_eval = r_eval, rtol=1e-7, atol=1e-9)
 
 #Lösung aus DGLs
-r= sol_isentrop_12.t
+r12= sol_isentrop_12.t
 p_s_12_prof= sol_isentrop_12.y[0]
 p_12_prof = sol_real_12.y[0]
 
 # Temperatur, Enthalpie, Entropie und Druckprofile
-T_s_12_prof = np.empty_like(r)
-T_12_prof = np.empty_like(r)
-s_12_prof = np.empty_like(r)
-h_s_12_prof = np.empty_like(r)
-h_12_prof = np.empty_like(r)
+T_s_12_prof = np.empty_like(r12)
+T_12_prof = np.empty_like(r12)
+s_12_prof = np.empty_like(r12)
+h_s_12_prof = np.empty_like(r12)
+h_12_prof = np.empty_like(r12)
 
 # Isentroper Fall
 for i, pi in enumerate(p_s_12_prof):
@@ -120,7 +121,7 @@ m_flow = Q_dot_ab / delta_h_23
 
 
 # DGL Expansion isentrop
-r_eval_expansion = np.linspace(r2, r1, 500)
+r_eval_expansion_34 = np.linspace(r2, r1, 500)
 AS_34_isentrop = AbstractState('HEOS',fluid)
 def dp_iso_34(r,p):
     pi = p[0]
@@ -128,7 +129,7 @@ def dp_iso_34(r,p):
     rho_34_s = AS_34_isentrop.rhomass()
     return rho_34_s * omega**2 * r
 
-sol_isentrop_34 = solve_ivp(dp_iso_34,(r2, r1),[p3], method="DOP853",t_eval = r_eval_expansion, rtol=1e-7, atol=1e-9)
+sol_isentrop_34 = solve_ivp(dp_iso_34,(r2, r1),[p3], method="DOP853",t_eval = r_eval_expansion_34, rtol=1e-7, atol=1e-9)
 
 # DGL Expansion real
 AS_34_real = AbstractState('HEOS',fluid)
@@ -143,10 +144,10 @@ def dp_real_34(r,p):
     rho_34_real = AS_34_real.rhomass()
     return rho_34_real * omega**2 * r
 
-sol_real_34 = solve_ivp(dp_real_34,(r2, r1),[p3], method="DOP853",t_eval = r_eval_expansion, rtol=1e-7, atol=1e-9)
+sol_real_34 = solve_ivp(dp_real_34,(r2, r1),[p3], method="DOP853",t_eval = r_eval_expansion_34, rtol=1e-7, atol=1e-9)
 
 #Lösungen aus DGL's
-r= sol_isentrop_12.t
+r= sol_isentrop_34.t
 p_s_34_prof= sol_isentrop_34.y[0]
 p_34_prof = sol_real_34.y[0]
 
@@ -186,38 +187,78 @@ s4_s = s3
 
 # Drcuknivaeu Wärmeaufnahme
 p5 = p4
+r_eval_expansion= np.linspace(r1, r0, 200)
+#Isentrope Verdichtung von 7 nach 1 zurückrechnen
+AS_71_isentrop = AbstractState('HEOS',fluid)
+def dp_iso_71(r,p):
+    pi = p[0]
+    AS_71_isentrop.update(CP.PSmass_INPUTS, pi, s1)
+    rho_71_s = AS_71_isentrop.rhomass()
+    return rho_71_s * omega**2 * r
 
-#Rückrechnen von Zustand 1 auf Zustand 5
-AS_51_s_ref = AbstractState('HEOS',fluid)
-AS_51_real = AbstractState('HEOS',fluid)
+#Solver aufstellen, integration von r1 nach r0 (wie expansion)
+sol_iso_71 = solve_ivp(dp_iso_71,(r1, r0),[p1], method="DOP853",t_eval = r_eval_expansion, rtol=1e-7, atol=1e-9)
 
-def T5_finder(T5):
-    AS_51_real.update(CP.PT_INPUTS, p5, T5)
-    s5= AS_51_real.smass()
-    AS_51_s_ref.update(CP.PSmass_INPUTS, p1, s5)
-    h1_s = AS_51_s_ref.hmass()
-    h5 = AS_51_real.hmass()
+#Ergebnise/Profile
+r_71= sol_iso_71.t
+p_s_71_prof= sol_iso_71.y[0]
+p7_s = p_s_71_prof[-1]
 
-    return (h1_s-h5)/(h1-h5) - eta_Luefter
+# T5 - Finder --> Kreisprozess schließen
 
-# Nullstellenproblem lösen
-T5_min = T1-30
-T5_max = T1
-T5_guess = (T5_min, T5_max)
-sol_T5 = root_scalar(T5_finder, bracket = T5_guess, method='brentq', xtol=1e-6)
 
+def T5_Finder(T5):
+    AS_5_Finder = AbstractState('HEOS', fluid)
+    AS_56_isentrop = AbstractState('HEOS', fluid)
+    AS_67_isentrop = AbstractState('HEOS', fluid)
+    AS_67_real = AbstractState('HEOS', fluid)
+    AS_5_Finder.update(CP.PT_INPUTS, p5, T5)
+    s5 = AS_5_Finder.smass()
+    h5 = AS_5_Finder.hmass()
+
+    def dp_iso_56_Finder(r, p):
+        pi = p[0]
+        AS_56_isentrop.update(CP.PSmass_INPUTS, pi, s5)
+        rho_56_s = AS_56_isentrop.rhomass()
+        return rho_56_s * omega ** 2 * r
+
+    # Solver/Integrator für 5-->6
+    sol_iso_56 = solve_ivp(dp_iso_56_Finder, (r1, r0), [p5], method="DOP853", t_eval=r_eval_expansion, rtol=1e-7, atol=1e-9)
+
+    #Ergebnis
+    p6_s = sol_iso_56.y[0][-1]
+    AS_56_isentrop.update(CP.PSmass_INPUTS, p6_s, s5)
+    h6_s = AS_56_isentrop.hmass()
+
+    # Lüfter 6-->7 und für 7 muss gelten s7 = s1
+    AS_67_isentrop.update(CP.PSmass_INPUTS, p7_s, s5)
+    h7_s = AS_67_isentrop.hmass()
+    h7 = h6_s + (h7_s - h6_s)/eta_Luefter
+    AS_67_real.update(CP.HmassP_INPUTS, h7, p7_s)
+    s7 = AS_67_real.smass()
+    #Endgültige Funktion für Nullstelle
+    return s7 - s1
+
+#Funktion macht folgendes: p6 wird ausgerechnet aus der weiteren expansion von 5 --> 6 , wird Zustand 1 genommen und von da aus Zustand 7 bestimmt
+#Im nächsten Schritt wird die Funktion T5 finder definiert. diese nimmt den Druck p5, nimmt eine Temperatur T5 an definiert so den Zustand 5 im anschluss wird isotrop expandiert auf 6
+# von 6-->7 wird dann erstmal isentrop verdichtet und daraus dann die reale verdichtung ausgerechnet mit h7. der Zustand wird definiert als mit p7 und h7 und daraus bekommt man s7
+# Wenn bei dem genommenem T gilt : s7 = s1, dann wurde der richtige T5 gefunden der den Kreisprozess schließt
+
+#T5 finden dass den spaß erfüllt
+T5_min=T4
+T5_max= T1
+sol_T5 = root_scalar(T5_Finder, bracket=[T5_min, T5_max], method='brentq', xtol=1e-6)
 T5= sol_T5.root
-delta_p_34= p3-p4
-delta_p_12 = p2-p1
-delta_p_51 = p1-p5
-delta_T_12 = T2-T1
-delta_T_51 = T1-T5
-print(f'{T5}, {p5}, {delta_p_34}, {delta_p_12}, {delta_T_12}, {delta_T_51}, {delta_p_51}')
+print(f'T5 = {T5}')
+
 
 #Zustand 5 setzen
 AS_5_real = AbstractState('HEOS',fluid)
 AS_5_real.update(CP.PT_INPUTS, p5, T5)
 h5= AS_5_real.hmass()
+s5= AS_5_real.smass()
+
+#Jetzt richtig 5-->6 isentrope entspannung r1 --> r0
 
 # 4-->5 isobare Wärmezufuhr
 Q_dot_zu = m_flow * (h5-h4)
