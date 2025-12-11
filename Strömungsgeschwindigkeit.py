@@ -6,11 +6,16 @@ import RWP
 from RWP import rho_67_prof
 
 #Eingabe Rohrradius und berechnung der Querschnittsfläche
-r_Rohr = 0.03
-A_Rohr = np.pi*r_Rohr**2
+r_Rohr = 0.006
+N_Rohr = 12
+A_Rohr = N_Rohr * np.pi*(r_Rohr**2)
+
+# Anzahl der Rohre
+
 
 #Eingabe technische Rauhigkeit der Rohre
-k = 0.08
+k_mm = 0.04
+k = k_mm/1000
 
 #Massestrom aus RWP Skript
 m_flow = RWP.m_flow
@@ -119,14 +124,15 @@ plt.show()
 AS_Viscosity = AbstractState('HEOS', RWP.fluid)
 p_RWP = [RWP.p1, RWP.p2, RWP.p3, RWP.p4, RWP.p5, RWP.p6_s, RWP.p7]
 T_RWP = [RWP.T1, RWP.T2, RWP.T3, RWP.T4, RWP.T5, RWP.T6s, RWP.T7]
-mu_RWP = []
+mu = []
 for p,T in zip(p_RWP, T_RWP):
     AS_Viscosity.update(CP.PT_INPUTS, p, T)
-    mu_RWP.append(AS_Viscosity.viscosity())
+    mu.append(AS_Viscosity.viscosity())
 
 rho_states = np.array([rho_x_1, rho_x_2, rho_x_3, rho_x_4, rho_x_5, rho_x_6, rho_x_7])
 v_states = np.array([v_12[0], v_23[0], v_34[0], v_45[0], v_56[0], v_67[0], v_78[0]])
 
+mu_RWP = np.array(mu)
 Re = (rho_states * v_states * 2 * r_Rohr)/mu_RWP
 Re_min = np.round(np.min(Re),0)
 Re_max = np.round(np.max(Re),0)
@@ -168,11 +174,92 @@ rho_mittel = np.array([rho_12_mittel, rho_23_mittel, rho_34_mittel, rho_45_mitte
 
 #Rohrlängen als Arrays für Druckverlustberechnung
 L = np.array([delta_r12, L_23, delta_r12, L_45, delta_r01, 0, delta_r01 ])
+d_k = (2*r_Rohr)/k
 
-# Verlustbeiwert für technisch Rauhe Rohre
-lam = (2 * np.log10(2*r_Rohr/k) + 1.14)**(-2)
+#Arrrays definieren für Bedingungen der Rechenvorschrift und Ergebnisse
+d = 2*r_Rohr
+Re_k_d = Re_mittel * (k/d)
+lambdas = np.zeros_like(Re_k_d)
+# Einträge in Re_k_d abarbeiten und der rechenvorschrift zuweisen, und dann im Ergebnisvektor lamdas mit richtigem index abspeichern
+for i,r in enumerate(Re_k_d):
+    # technisch Glatte Rohre
+    if r <= 65:
+        if 2300 < Re_mittel[i] <= 1e5:
+            lambdas[i] = 0.3164 / (Re_mittel[i]**0.25)
+        elif 1e5 < Re_mittel[i] <= 5*1e6:
+            lambdas[i] = 0.0032 + (0.221 / (Re_mittel[i]**0.237))
+        else:
+            raise ValueError('Keine passende Rechenvorschrift für Druckverlust')
+    # voll ausgebildete turbulente Strömung
+    elif 65 < r < 1300:
+        if d/k <= 200:
+            lambdas[i] = (1+(8/(Re_mittel[i]*k/d)))/((2*np.log10(3.71*d/k))**2)
+        else:
+            lambdas[i] = (1.8*np.log10((k/(10*d))+(7/Re_mittel[i])))**(-2)
+    # technisch raue Rohre
+    else:
+        lambdas[i] = (2 * np.log10(d/k)+1.14)**(-2)
 
-# p_Verlust als Array nach Rohrsegmenten
-p_Verlust = (lam * L * rho_mittel * v_square_mittel)/(4*r_Rohr)
+
+# p_Verlust als Array nach Rohrsegmenten für ein Rohr
+p_Verlust = (lambdas * L * rho_mittel * v_square_mittel)/(4*r_Rohr)
+
+#Zusammenaddierter Druckverlust aus einem Rohr
 p_Verlust_ges = np.sum(p_Verlust)
-print(p_Verlust_ges)
+
+print('p_Verlust=', p_Verlust_ges)
+
+# Wärmeübertragung
+# Fluidobjekt definieren
+AS_Waerme = AbstractState('HEOS', RWP.fluid)
+# Pr bekommen für Zustände 2, 3, 4, 5
+p2345 = np.array([RWP.p2, RWP.p3, RWP.p4, RWP.p5])
+T2345 = np.array([RWP.T2, RWP.T3, RWP.T4, RWP.T5])
+Pr2345 = np.empty_like(p2345)
+lambda_t = np.empty_like(p2345)
+
+for i, (p, T) in enumerate(zip(p2345, T2345)):
+    AS_Waerme.update(CP.PT_INPUTS, p, T)
+    lambda_t[i] = AS_Waerme.conductivity()
+    Pr2345[i] = AS_Waerme.Prandtl()
+
+# Pr über Rohrabschnitte mitteln
+Pr_23_mittel = (Pr2345[0] + Pr2345[1]) / 2
+Pr_45_mittel = (Pr2345[2] + Pr2345[3]) / 2
+
+# Wärmeleitfähigkeit lambda mitteln
+lambda_t_23_mittel = (lambda_t[0] + lambda_t[1])/2
+lambda_t_45_mittel = (lambda_t[2] + lambda_t[3])/2
+
+# Größen für Nusselt
+Re_Nu = np.array([Re_23_mittel , Re_45_mittel])
+ksi = (1.8 * np.log10(Re_Nu) - 1.5)**(-2)
+Pr_Nu = np.array([Pr_23_mittel, Pr_45_mittel])
+lambda_Nu = np.array([lambda_t_23_mittel, lambda_t_45_mittel])
+
+# Längen der Rohre als Array
+L_Nu = np.array([L_23, L_45])
+
+# f1 , f2 wird vernachlässigt da geringe delta - T über Rohrlänge
+f1 = 1 + ((d/L_Nu)**(2/3))
+
+#Nu
+Nu = ((ksi/8) * Re_Nu * Pr_Nu)/ (1 + 12.7 * np.sqrt((ksi/8)) * ((Pr_Nu**(2/3))-1)) * f1
+
+#alpha
+alpha = ( Nu * lambda_Nu ) / d
+
+#delta T
+delta_T23 = T2345[1] - T2345[0]
+delta_T45 = T2345[3] - T2345[2]
+delta_T = np.array([delta_T23, delta_T45])
+
+# nach A auflösen
+Q_Einzel = np.array([RWP.Q_dot_ab/N_Rohr, RWP.Q_dot_zu/N_Rohr])
+A = Q_Einzel / (alpha*delta_T)
+print('alpha = ', alpha)
+#benötigte Länge
+L_soll = A / ( np.pi * d )
+print('L_soll=', L_soll)
+print('delta_T = ', delta_T)
+print(T2345[0])

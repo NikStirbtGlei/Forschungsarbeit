@@ -17,7 +17,7 @@ fluid='Argon'
 r2= 0.6
 r1=0.22
 r0=0.05
-n=3700/60 # Umdrehungen pro s [1/s]
+n=4000/60 # Umdrehungen pro s [1/s]
 omega=n*2*np.pi
 eta_Verdichtung = 0.99
 eta_Luefter = 0.8
@@ -97,6 +97,7 @@ T2 = T_12_prof[-1]
 h2 = h_12_prof[-1]
 s2= s_12_prof[-1]
 rho_2 = rho_12_prof[-1]
+cp_2 = AS_12_real.cpmass()
 
 # Referenzzustand
 p2_s = p_s_12_prof[-1]
